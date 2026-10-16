@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Values in 2060 – Survey</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #1c2330; --muted: #5b6577;
+    --line: #c9d0dc; --accent: #2f6fed; --today: #e07a1f; --future: #1f9d6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--ink); line-height: 1.5; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 1.6rem; margin: 0 0 8px; }
+  h2 { font-size: 1.15rem; margin: 0 0 6px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: .92rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 18px; margin-bottom: 18px; }
+  .scenario { border-left: 4px solid var(--future); }
+  .values { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+  .values div { background: #f0f3f8; border-radius: 8px; padding: 10px; font-size: .9rem; }
+  .plots { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .plots, .values { grid-template-columns: 1fr; } }
+  svg { width: 100%; height: auto; touch-action: manipulation; cursor: crosshair; }
+  .readout { font-size: .9rem; min-height: 3.2em; color: var(--muted); }
+  .readout b { color: var(--ink); }
+  button { font: inherit; padding: 12px 22px; border-radius: 8px; border: 0;
+           background: var(--accent); color: #fff; cursor: pointer; font-weight: 600; }
+  button:disabled { background: #a9b3c6; cursor: not-allowed; }
+  #status { margin-top: 12px; font-weight: 600; }
+  .ok { color: #17803d; } .err { color: #b3261e; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Values today and in 2060</h1>
+<p class="muted">A short university survey (about one minute, anonymous). You will place one dot on each of two triangles.</p>
+
+<section class="card scenario">
+  <h2>The world of 2060</h2>
+  <p>By 2060, AI has replaced many jobs and people retire earlier, with pensions funded more heavily by
+     corporations and governments. Education is redesigned around personalised AI. Oil supplies only
+     20% of the world's energy while renewables thrive.</p>
+  <p><b>The three values:</b></p>
+  <div class="values">
+    <div><b>Economic productivity</b><br>AI-driven growth and output</div>
+    <div><b>Human wellbeing &amp; purpose</b><br>Security, meaning and care for people</div>
+    <div><b>Environmental sustainability</b><br>Renewable energy and protecting nature</div>
+  </div>
+</section>
+
+<section class="card">
+  <p><b>How to answer:</b> click inside a triangle to place your dot. The closer the dot is to a corner,
+     the more importance <em>you think society gives</em> that value. The centre means all three are
+     valued equally. Click again to move your dot.</p>
+</section>
+
+<div id="formArea">
+  <div class="plots">
+    <section class="card">
+      <h2>1. Society <span style="color:var(--today)">today</span></h2>
+      <p class="muted">How much importance does society place on each value now?</p>
+      <svg id="plot-today" viewBox="0 0 400 350" data-plot="today" role="img" aria-label="Ternary plot for today"></svg>
+      <div class="readout" id="readout-today">No dot placed yet.</div>
+    </section>
+    <section class="card">
+      <h2>2. Society in <span style="color:var(--future)">2060</span></h2>
+      <p class="muted">How much importance will society place on each value in the world described above?</p>
+      <svg id="plot-2060" viewBox="0 0 400 350" data-plot="2060" role="img" aria-label="Ternary plot for 2060"></svg>
+      <div class="readout" id="readout-2060">No dot placed yet.</div>
+    </section>
+  </div>
+  <button id="submitBtn" disabled>Submit my answers</button>
+  <div id="status" role="status"></div>
+</div>
+
+<section id="thanks" class="card hidden">
+  <h2>Thank you!</h2>
+  <p>Your answers have been recorded. Each person can submit only once.</p>
+</section>
+
+</main>
+
+<script>
+// ------------------------------------------------------------------
+// CONFIG: paste your Google Apps Script web-app URL here (ends in /exec).
+// While it is empty the page runs in DEMO MODE: answers are only kept
+// in this browser (localStorage) so you can test the page.
+// ------------------------------------------------------------------
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxtQ2KomVJRCouXYH8IhQPscIayNXhlItEEnykgIFccN3SMw1W46K7r01lFEMkXiPbSMA/exec";
+
+// TEST_MODE = true lets you submit repeatedly (each submission counts as a new respondent).
+// Set it to false BEFORE sharing the link, and delete any test rows from the Sheet.
+const TEST_MODE = true;
+
+const LABELS = { a: "Economic productivity", b: "Human wellbeing & purpose", c: "Environmental sustainability" };
+
+// Triangle corners in SVG coordinates: A top, B bottom-left, C bottom-right
+const A = { x: 200, y: 40 }, B = { x: 50, y: 300 }, C = { x: 350, y: 300 };
+const NS = "http://www.w3.org/2000/svg";
+const colours = { today: "#e07a1f", "2060": "#1f9d6b" };
+
+const state = { today: null, "2060": null };
+
+function el(name, attrs, parent, text) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function toXY(a, b, c) {
+  return { x: a * A.x + b * B.x + c * C.x, y: a * A.y + b * B.y + c * C.y };
+}
+
+function toBary(px, py) {
+  const d = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
+  const a = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) / d;
+  const b = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) / d;
+  return { a, b, c: 1 - a - b };
+}
+
+function drawPlot(svg) {
+  const key = svg.dataset.plot;
+  // grid lines every 20%
+  for (let i = 1; i < 5; i++) {
+    const t = i / 5;
+    [[toXY(t, 1 - t, 0), toXY(t, 0, 1 - t)],
+     [toXY(1 - t, t, 0), toXY(0, t, 1 - t)],
+     [toXY(1 - t, 0, t), toXY(0, 1 - t, t)]].forEach(([p, q]) =>
+      el("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: "#dde2ea", "stroke-width": 1 }, svg));
+  }
+  el("polygon", { points: `${A.x},${A.y} ${B.x},${B.y} ${C.x},${C.y}`, fill: "rgba(47,111,237,.04)", stroke: "#5b6577", "stroke-width": 2 }, svg);
+  // centre marker
+  const m = toXY(1/3, 1/3, 1/3);
+  el("circle", { cx: m.x, cy: m.y, r: 2.5, fill: "#9aa5b8" }, svg);
+  // corner labels
+  const label = (x, y, anchor, lines) => {
+    const t = el("text", { x, y, "text-anchor": anchor, "font-size": 14, "font-weight": 700, fill: "#1c2330" }, svg);
+    lines.forEach((line, i) => el("tspan", { x, dy: i === 0 ? 0 : 17 }, t, line));
+  };
+  label(A.x, A.y - 14, "middle", ["Economic productivity"]);
+  label(B.x - 30, B.y + 22, "start", ["Human wellbeing", "& purpose"]);
+  label(C.x + 30, C.y + 22, "end", ["Environmental", "sustainability"]);
+  // dot (hidden until placed)
+  const dot = el("circle", { r: 9, fill: colours[key], stroke: "#fff", "stroke-width": 2.5, visibility: "hidden" }, svg);
+
+  svg.addEventListener("click", (ev) => {
+    const pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    let { a, b, c } = toBary(p.x, p.y);
+    if (a < -0.02 || b < -0.02 || c < -0.02) return;   // outside triangle
+    a = Math.max(0, a); b = Math.max(0, b); c = Math.max(0, c);
+    const s = a + b + c; a /= s; b /= s; c /= s;        // normalise to sum 1
+    state[key] = { a, b, c };
+    const xy = toXY(a, b, c);
+    dot.setAttribute("cx", xy.x); dot.setAttribute("cy", xy.y); dot.setAttribute("visibility", "visible");
+    document.getElementById("readout-" + key).innerHTML =
+      `<b>${Math.round(a * 100)}%</b> ${LABELS.a}<br><b>${Math.round(b * 100)}%</b> ${LABELS.b}<br><b>${Math.round(c * 100)}%</b> ${LABELS.c}`;
+    document.getElementById("submitBtn").disabled = !(state.today && state["2060"]);
+  });
+}
+
+document.querySelectorAll("svg[data-plot]").forEach(drawPlot);
+
+// ---------- one submission per respondent ----------
+function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+function respondentId() {
+  let id = TEST_MODE ? null : safeGet("respondent_id");
+  if (!id) {
+    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+       : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    if (!TEST_MODE) safeSet("respondent_id", id);
+  }
+  return id;
+}
+
+function markSubmitted() { if (!TEST_MODE) safeSet("submitted", "yes"); }
+
+function showThanks() {
+  document.getElementById("formArea").classList.add("hidden");
+  document.getElementById("thanks").classList.remove("hidden");
+}
+
+if (!TEST_MODE && safeGet("submitted") === "yes") showThanks();
+if (TEST_MODE) {
+  const banner = document.createElement("div");
+  banner.className = "card";
+  banner.style.borderColor = "#b3261e";
+  banner.innerHTML = "<b>TEST MODE is on</b> – repeat submissions are allowed. Set <code>TEST_MODE = false</code> before sharing.";
+  document.querySelector("main").prepend(banner);
+  const again = document.createElement("button");
+  again.textContent = "Submit another test response";
+  again.onclick = () => location.reload();
+  document.getElementById("thanks").appendChild(again);
+}
+
+document.getElementById("submitBtn").addEventListener("click", async () => {
+  const status = document.getElementById("status");
+  const btn = document.getElementById("submitBtn");
+  const round = (n) => Math.round(n * 10000) / 10000;
+  const payload = {
+    respondent_id: respondentId(),
+    submissions: ["today", "2060"].map((k) => ({
+      plot: k, productivity: round(state[k].a), wellbeing: round(state[k].b), sustainability: round(state[k].c)
+    }))
+  };
+  btn.disabled = true;
+  status.className = ""; status.textContent = "Submitting…";
+
+  if (!SCRIPT_URL) {   // demo mode
+    const all = JSON.parse(safeGet("demo_responses") || "[]"); all.push(payload);
+    safeSet("demo_responses", JSON.stringify(all));
+    markSubmitted();
+    console.log("DEMO MODE – no SCRIPT_URL set. Payload:", payload);
+    showThanks();
+    return;
+  }
+
+  try {
+    // text/plain avoids a CORS preflight, which Apps Script cannot answer
+    const res = await fetch(SCRIPT_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload) });
+    const out = await res.json();
+    if (out.status === "ok" || out.status === "duplicate") { markSubmitted(); showThanks(); }
+    else throw new Error(out.message || "Unexpected response");
+  } catch (err) {
+    try {   // fallback: fire-and-forget (server ignores duplicates)
+      await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload) });
+      markSubmitted(); showThanks();
+    } catch (err2) {
+      status.className = "err"; status.textContent = "Could not submit. Please check your connection and try again.";
+      btn.disabled = false;
+    }
+  }
+});
+</script>
+</body>
+</html>
